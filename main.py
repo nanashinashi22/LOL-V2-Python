@@ -20,6 +20,8 @@ else:
 if not OUTPUT_CHANNEL_ID:
     print("環境変数 OUTPUT_CHANNEL_ID が設定されていません。")
     exit(1)
+else:
+    print(f"OUTPUT_CHANNEL_ID が {OUTPUT_CHANNEL_ID} に設定されています。")
 
 # Intentsの設定
 intents = discord.Intents.default()
@@ -47,21 +49,6 @@ def save_user_data(data):
 
 # 初期データのロード
 registered_users = load_user_data()
-
-# ログメッセージ送信関数の追加
-async def log_command_usage(user: discord.User, command_name: str):
-    """
-    指定されたチャンネルにコマンド使用ログを送信します。
-
-    Args:
-        user (discord.User): コマンドを実行したユーザー。
-        command_name (str): 使用されたコマンド名。
-    """
-    output_channel = bot.get_channel(int(OUTPUT_CHANNEL_ID))
-    if output_channel:
-        await output_channel.send(f"{user.display_name}さんが`/{command_name}`を使用しました。")
-    else:
-        print("指定されたチャンネルが見つかりません。")
 
 # ユーザーがLoLをプレイしているかどうかを判定する関数
 def is_playing_lol(activity):
@@ -129,6 +116,7 @@ async def check_last_play():
                     await output_channel.send(f"{user.mention} LOLから逃げるな。お前を見ている")
                     # 通知フラグを更新
                     registered_users[user_id]['notified'] = True
+                    print(f"通知メッセージを {user.display_name} に送信しました。")
                 except Exception as e:
                     print(f"ユーザー {user_id} にメッセージを送信できませんでした: {e}")
             else:
@@ -162,9 +150,6 @@ async def register_command(interaction: discord.Interaction, user: discord.User)
         await output_channel.send(f"{user.mention} を監視対象に登録しました！")
     else:
         await interaction.response.send_message("指定されたチャンネルが見つかりません。", ephemeral=True)
-    
-    # ログメッセージの送信
-    await log_command_usage(interaction.user, "register")
 
 # /check コマンドの実装
 @bot.tree.command(name="check", description="ユーザーが最後にLoLをプレイしてからの経過時間を表示します。")
@@ -189,9 +174,6 @@ async def check_command(interaction: discord.Interaction, user: discord.User):
         )
     else:
         await interaction.response.send_message("指定されたチャンネルが見つかりません。", ephemeral=True)
-    
-    # ログメッセージの送信
-    await log_command_usage(interaction.user, "check")
 
 # /login コマンドの実装
 @bot.tree.command(name="login", description="Botを起動し、挨拶メッセージを送信します。")
@@ -202,9 +184,6 @@ async def login_command(interaction: discord.Interaction):
         await output_channel.send("ピピーッ❗️🔔⚡️LOL脱走兵監視botです❗️👊👮❗️")
     else:
         await interaction.response.send_message("指定されたチャンネルが見つかりません。", ephemeral=True)
-    
-    # ログメッセージの送信
-    await log_command_usage(interaction.user, "login")
 
 # /logout コマンドの実装
 @bot.tree.command(name="logout", description="Botをオフラインにします。")
@@ -214,8 +193,6 @@ async def logout_command(interaction: discord.Interaction):
     if output_channel:
         await output_channel.send("Botをオフラインにします。")
     await interaction.response.send_message("Botをオフラインにします。", ephemeral=True)
-    # ログメッセージの送信
-    await log_command_usage(interaction.user, "logout")
     await bot.close()
 
 # /rules コマンドの実装
@@ -223,7 +200,7 @@ async def logout_command(interaction: discord.Interaction):
 async def rules_command(interaction: discord.Interaction):
     text = (
         "```\n"
-        "このBotは、Discordのアクティビティ情報を利用してLoL脱走兵へ通告するDiscord Botです。\n"
+        "このBotは、Discordのアクティビティ情報を利用してLoLの最新プレイ時間をチェックできるDiscord Botです。\n"
         "主なコマンド:\n"
         "/register @ユーザー: Discordユーザーを監視対象に登録\n"
         "/check @ユーザー: 最後にLoLをプレイしてから何時間経過しているかチェック\n"
@@ -238,11 +215,6 @@ async def rules_command(interaction: discord.Interaction):
         await output_channel.send(text)
     else:
         await interaction.response.send_message("指定されたチャンネルが見つかりません。", ephemeral=True)
-    
-    # ログメッセージの送信
-    await log_command_usage(interaction.user, "rules")
-
-# /help コマンドの削除に伴い、関連するコードはここでは提供しません
 
 # 簡単なHTTPサーバーの実装（Koyebのヘルスチェック用）
 async def handle(request):
