@@ -48,6 +48,21 @@ def save_user_data(data):
 # 初期データのロード
 registered_users = load_user_data()
 
+# ログメッセージ送信関数の追加
+async def log_command_usage(user: discord.User, command_name: str):
+    """
+    指定されたチャンネルにコマンド使用ログを送信します。
+
+    Args:
+        user (discord.User): コマンドを実行したユーザー。
+        command_name (str): 使用されたコマンド名。
+    """
+    output_channel = bot.get_channel(int(OUTPUT_CHANNEL_ID))
+    if output_channel:
+        await output_channel.send(f"{user.display_name}さんが`/{command_name}`を使用しました。")
+    else:
+        print("指定されたチャンネルが見つかりません。")
+
 # ユーザーがLoLをプレイしているかどうかを判定する関数
 def is_playing_lol(activity):
     if activity is None:
@@ -147,6 +162,9 @@ async def register_command(interaction: discord.Interaction, user: discord.User)
         await output_channel.send(f"{user.mention} を監視対象に登録しました！")
     else:
         await interaction.response.send_message("指定されたチャンネルが見つかりません。", ephemeral=True)
+    
+    # ログメッセージの送信
+    await log_command_usage(interaction.user, "register")
 
 # /check コマンドの実装
 @bot.tree.command(name="check", description="ユーザーが最後にLoLをプレイしてからの経過時間を表示します。")
@@ -171,6 +189,9 @@ async def check_command(interaction: discord.Interaction, user: discord.User):
         )
     else:
         await interaction.response.send_message("指定されたチャンネルが見つかりません。", ephemeral=True)
+    
+    # ログメッセージの送信
+    await log_command_usage(interaction.user, "check")
 
 # /login コマンドの実装
 @bot.tree.command(name="login", description="Botを起動し、挨拶メッセージを送信します。")
@@ -181,6 +202,9 @@ async def login_command(interaction: discord.Interaction):
         await output_channel.send("ピピーッ❗️🔔⚡️LOL脱走兵監視botです❗️👊👮❗️")
     else:
         await interaction.response.send_message("指定されたチャンネルが見つかりません。", ephemeral=True)
+    
+    # ログメッセージの送信
+    await log_command_usage(interaction.user, "login")
 
 # /logout コマンドの実装
 @bot.tree.command(name="logout", description="Botをオフラインにします。")
@@ -190,6 +214,8 @@ async def logout_command(interaction: discord.Interaction):
     if output_channel:
         await output_channel.send("Botをオフラインにします。")
     await interaction.response.send_message("Botをオフラインにします。", ephemeral=True)
+    # ログメッセージの送信
+    await log_command_usage(interaction.user, "logout")
     await bot.close()
 
 # /rules コマンドの実装
@@ -204,7 +230,6 @@ async def rules_command(interaction: discord.Interaction):
         "/login: Botの挨拶メッセージ送信 & ログイン\n"
         "/logout: Botをオフラインにする\n"
         "/rules: LOL脱走兵を監視します。\n"
-        "/help: コマンドリストを表示します。\n"
         "```"
     )
     # 指定されたチャンネルにメッセージを送信
@@ -213,7 +238,11 @@ async def rules_command(interaction: discord.Interaction):
         await output_channel.send(text)
     else:
         await interaction.response.send_message("指定されたチャンネルが見つかりません。", ephemeral=True)
+    
+    # ログメッセージの送信
+    await log_command_usage(interaction.user, "rules")
 
+# /help コマンドの削除に伴い、関連するコードはここでは提供しません
 
 # 簡単なHTTPサーバーの実装（Koyebのヘルスチェック用）
 async def handle(request):
@@ -244,6 +273,7 @@ async def run_bot_and_server():
         pass
     finally:
         await runner.cleanup()
+        await bot.close()
 
 # ボットとサーバーを起動
 def main():
