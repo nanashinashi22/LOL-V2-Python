@@ -14,6 +14,8 @@ OUTPUT_CHANNEL_ID = os.environ.get("OUTPUT_CHANNEL_ID")  # メッセージ送信
 if not DISCORD_BOT_TOKEN:
     print("環境変数 DISCORD_BOT_TOKEN が設定されていません。")
     exit(1)
+else:
+    print("DISCORD_BOT_TOKEN が正しく取得されました。")
 
 if not OUTPUT_CHANNEL_ID:
     print("環境変数 OUTPUT_CHANNEL_ID が設定されていません。")
@@ -128,7 +130,7 @@ async def on_command_error(interaction: discord.Interaction, error):
 # /register コマンドの実装
 @bot.tree.command(name="register", description="Discordユーザーを監視対象に登録します。")
 @app_commands.describe(
-    user="登録したいユーザーを@メンションで指定"
+    user="登録したいユーザーを選択してください"
 )
 async def register_command(interaction: discord.Interaction, user: discord.User):
     if user.id in registered_users:
@@ -148,7 +150,7 @@ async def register_command(interaction: discord.Interaction, user: discord.User)
 
 # /check コマンドの実装
 @bot.tree.command(name="check", description="ユーザーが最後にLoLをプレイしてからの経過時間を表示します。")
-@app_commands.describe(user="対象のユーザーを@メンションで指定")
+@app_commands.describe(user="対象のユーザーを選択してください")
 async def check_command(interaction: discord.Interaction, user: discord.User):
     if user.id not in registered_users:
         await interaction.response.send_message("まだ登録されていません。 `/register` コマンドで登録してください。", ephemeral=True)
@@ -191,17 +193,18 @@ async def logout_command(interaction: discord.Interaction):
     await bot.close()
 
 # /rules コマンドの実装
-@bot.tree.command(name="rules", description="BOTの機能を解説します。")
+@bot.tree.command(name="rules", description="LOL脱走兵を監視します。")
 async def rules_command(interaction: discord.Interaction):
     text = (
         "```\n"
-        "このBotは、Discordのアクティビティ情報を利用してLoLの最新プレイ時間をチェックできるDiscord Botです。\n"
+        "このBotは、Discordのアクティビティ情報を利用してLoL脱走兵へ通告するDiscord Botです。\n"
         "主なコマンド:\n"
         "/register @ユーザー: Discordユーザーを監視対象に登録\n"
         "/check @ユーザー: 最後にLoLをプレイしてから何時間経過しているかチェック\n"
         "/login: Botの挨拶メッセージ送信 & ログイン\n"
         "/logout: Botをオフラインにする\n"
-        "/rules: この説明を表示\n"
+        "/rules: LOL脱走兵を監視します。\n"
+        "/help: コマンドリストを表示します。\n"
         "```"
     )
     # 指定されたチャンネルにメッセージを送信
@@ -210,6 +213,7 @@ async def rules_command(interaction: discord.Interaction):
         await output_channel.send(text)
     else:
         await interaction.response.send_message("指定されたチャンネルが見つかりません。", ephemeral=True)
+
 
 # 簡単なHTTPサーバーの実装（Koyebのヘルスチェック用）
 async def handle(request):
@@ -233,8 +237,13 @@ async def run_bot_and_server():
     await site.start()
     print("HTTP server started for health checks.")
     
-    # 両方のタスクを並行して実行
-    await asyncio.gather(bot_task)
+    try:
+        # 両方のタスクを並行して実行
+        await asyncio.gather(bot_task)
+    except asyncio.CancelledError:
+        pass
+    finally:
+        await runner.cleanup()
 
 # ボットとサーバーを起動
 def main():
