@@ -144,12 +144,8 @@ async def register_command(interaction: discord.Interaction, user: discord.User)
         "notified": False
     }
     save_user_data(registered_users)
-    # 指定されたチャンネルにメッセージを送信
-    output_channel = bot.get_channel(int(OUTPUT_CHANNEL_ID))
-    if output_channel:
-        await output_channel.send(f"{user.mention} を監視対象に登録しました！")
-    else:
-        await interaction.response.send_message("指定されたチャンネルが見つかりません。", ephemeral=True)
+    # コマンド実行者に公開メッセージを送信
+    await interaction.response.send_message(f"{user.mention} を監視対象に登録しました！", ephemeral=False)
 
 # /check コマンドの実装
 @bot.tree.command(name="check", description="ユーザーが最後にLoLをプレイしてからの経過時間を表示します。")
@@ -166,33 +162,23 @@ async def check_command(interaction: discord.Interaction, user: discord.User):
     now_dt = datetime.now(timezone.utc)
     diff = now_dt - last_play_dt
     hours = diff.total_seconds() / 3600.0
-    # 指定されたチャンネルにメッセージを送信
-    output_channel = bot.get_channel(int(OUTPUT_CHANNEL_ID))
-    if output_channel:
-        await output_channel.send(
-            f"{user.mention} が最後にLoLをプレイしてから **{hours:.1f}時間** 経過しました。"
-        )
-    else:
-        await interaction.response.send_message("指定されたチャンネルが見つかりません。", ephemeral=True)
+    # コマンド実行者に公開メッセージを送信
+    await interaction.response.send_message(
+        f"{user.mention} が最後にLoLをプレイしてから **{hours:.1f}時間** 経過しました。",
+        ephemeral=False
+    )
 
 # /login コマンドの実装
 @bot.tree.command(name="login", description="Botを起動し、挨拶メッセージを送信します。")
 async def login_command(interaction: discord.Interaction):
-    # 指定されたチャンネルにメッセージを送信
-    output_channel = bot.get_channel(int(OUTPUT_CHANNEL_ID))
-    if output_channel:
-        await output_channel.send("ピピーッ❗️🔔⚡️LOL脱走兵監視botです❗️👊👮❗️")
-    else:
-        await interaction.response.send_message("指定されたチャンネルが見つかりません。", ephemeral=True)
+    # コマンド実行者に公開メッセージを送信
+    await interaction.response.send_message("ピピーッ❗️🔔⚡️LOL脱走兵監視botです❗️👊👮❗️", ephemeral=False)
 
 # /logout コマンドの実装
 @bot.tree.command(name="logout", description="Botをオフラインにします。")
 async def logout_command(interaction: discord.Interaction):
-    # 指定されたチャンネルにメッセージを送信
-    output_channel = bot.get_channel(int(OUTPUT_CHANNEL_ID))
-    if output_channel:
-        await output_channel.send("Botをオフラインにします。")
-    await interaction.response.send_message("Botをオフラインにします。", ephemeral=True)
+    # コマンド実行者に公開メッセージを送信
+    await interaction.response.send_message("Botをオフラインにします。", ephemeral=False)
     await bot.close()
 
 # /rules コマンドの実装
@@ -209,12 +195,8 @@ async def rules_command(interaction: discord.Interaction):
         "/rules: LOL脱走兵を監視します。\n"
         "```"
     )
-    # 指定されたチャンネルにメッセージを送信
-    output_channel = bot.get_channel(int(OUTPUT_CHANNEL_ID))
-    if output_channel:
-        await output_channel.send(text)
-    else:
-        await interaction.response.send_message("指定されたチャンネルが見つかりません。", ephemeral=True)
+    # コマンド実行者に公開メッセージを送信
+    await interaction.response.send_message(text, ephemeral=False)
 
 # 簡単なHTTPサーバーの実装（Koyebのヘルスチェック用）
 async def handle(request):
