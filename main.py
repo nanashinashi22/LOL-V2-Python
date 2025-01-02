@@ -2,7 +2,7 @@ import os
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
-import json
+import sqlite3
 from datetime import datetime, timezone, timedelta
 import asyncio
 from aiohttp import web
@@ -35,23 +35,49 @@ intents.members = True               # メンバー情報のインテントを�
 # ボットの初期化
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# データ保存用のファイル
-DATA_FILE = 'users_activity.json'
+# データベースの初期化
+def init_db():
+    conn = sqlite3.connect('users_activity.db')
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            last_play TEXT,
+            notified INTEGER
+        )
+    ''')
+    conn.commit()
+    conn.close()
 
-# データをロードする関数
-def load_user_data():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    return {}
+# データベースにユーザーを登録
+def register_user(user_id):
+    conn = sqlite3.connect('users_activity.db')
+    c = conn.cursor()
+    c.execute('INSERT OR IGNORE INTO users (user_id, last_play, notified) VALUES (?, ?, ?)', (user_id, None, 0))
+    conn.commit()
+    conn.close()
 
-# データを保存する関数
-def save_user_data(data):
-    with open(DATA_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
+# データベースからユーザー情報を取得
+def get_user(user_id):
+    conn = sqlite3.connect('users_activity.db')
+    c = conn.cursor()
+    c.execute('SELECT last_play, notified FROM users WHERE user_id = ?', (user_id,))
+    result = c.fetchone()
+    conn.close()
+    return result
 
-# 初期データのロード
-registered_users = load_user_data()
+# データベースのユーザー情報を更新
+def update_user(user_id, last_play=None, notified=None):
+    conn = sqlite3.connect('users_activity.db')
+    c = conn.cursor()
+    if last_play is not None and notified is not None:
+        c.execute('UPDATE users SET last_play = ?, notified = ? WHERE user_id = ?', (last_play, notified, user_id))
+    elif last_play is not None:
+        c.execute('UPDATE users SET last_play = ? WHERE user_id = ?', (last_play, user_id))
+    elif notified is not None:
+        c.execute('UPDATE users SET notified = ? WHERE user_id = ?', (notified, user_id))
+    conn.commit()
+    conn.close()
 
 # ユーザーがLoLをプレイしているかどうかを判定する関数
 def is_playing_lol(activity):
@@ -64,7 +90,8 @@ def is_playing_lol(activity):
 @bot.event
 async def on_presence_update(before, after):
     user_id = after.id
-    if user_id not in registered_users:
+    user_data = get_user(user_id)
+    if user_data is None:
         return  # 登録されていないユーザーは無視
 
     was_playing = is_playing_lol(before.activity)
@@ -72,9 +99,7 @@ async def on_presence_update(before, after):
 
     if not was_playing and is_playing:
         # プレイを開始した場合、タイムスタンプを記録し、通知フラグをリセット
-        registered_users[user_id]['last_play'] = datetime.now(timezone.utc).isoformat()
-        registered_users[user_id]['notified'] = False
-        save_user_data(registered_users)
+        update_user(user_id, last_play=datetime.now(timezone.utc).isoformat(), notified=0)
 
     elif was_playing and not is_playing:
         # プレイを終了した場合の処理（必要に応じて追加）
@@ -91,8 +116,8 @@ async def on_ready():
         print(e)
     check_last_play.start()  # バックグラウンドタスクの開始
 
-# バックグラウンドタスク: 1時間ごとにチェック
-@tasks.loop(hours=1)
+# バックグラウンドタスク: 10分ごとにチェック
+@tasks.loop(minutes=10)
 async def check_last_play():
     now = datetime.now(timezone.utc)
     threshold = timedelta(hours=24)
@@ -102,10 +127,13 @@ async def check_last_play():
         print("指定されたチャンネルが見つかりません。")
         return
 
-    for user_id, data in registered_users.items():
-        last_play_str = data.get('last_play')
-        notified = data.get('notified', False)
+    conn = sqlite3.connect('users_activity.db')
+    c = conn.cursor()
+    c.execute('SELECT user_id, last_play, notified FROM users')
+    users = c.fetchall()
+    conn.close()
 
+    for user_id, last_play_str, notified in users:
         if not last_play_str:
             continue  # プレイ履歴がない場合はスキップ
 
@@ -113,19 +141,16 @@ async def check_last_play():
         time_diff = now - last_play
 
         if time_diff >= threshold and not notified:
-            user = bot.get_user(int(user_id))
+            user = bot.get_user(user_id)
             if user:
                 try:
                     await output_channel.send(f"{user.mention} LOLから逃げるな。お前を見ている")
-                    # 通知フラグを更新
-                    registered_users[user_id]['notified'] = True
+                    update_user(user_id, notified=1)
                     print(f"通知メッセージを {user.display_name} に送信しました。")
                 except Exception as e:
                     print(f"ユーザー {user_id} にメッセージを送信できませんでした: {e}")
             else:
                 print(f"ユーザー {user_id} が見つかりません。")
-    
-    save_user_data(registered_users)
 
 # エラーハンドリング
 @bot.event
@@ -149,24 +174,17 @@ async def register_command(interaction: discord.Interaction, user: discord.User)
         await interaction.followup.send("Botは現在オフラインです。`/login` コマンドで再起動してください。")
         return
 
-    if user.id in registered_users:
+    if get_user(user.id) is not None:
         await interaction.followup.send(f"{user.mention} は既に登録されています。")
         return
 
-    registered_users[user.id] = {
-        "last_play": None,  # 初期値はNone
-        "notified": False
-    }
-    save_user_data(registered_users)
+    register_user(user.id)
     # 指定されたチャンネルにメッセージを送信
     output_channel = bot.get_channel(int(OUTPUT_CHANNEL_ID))
     if output_channel:
         await output_channel.send(f"{user.mention} を監視対象に登録しました！")
     else:
         await interaction.followup.send("指定されたチャンネルが見つかりません。")
-    
-    # メッセージを公開
-    await interaction.followup.send("ユーザーの登録が完了しました。", ephemeral=False)
 
 # /check コマンドの実装
 @bot.tree.command(name="check", description="ユーザーが最後にLoLをプレイしてからの経過時間を表示します。")
@@ -179,8 +197,14 @@ async def check_command(interaction: discord.Interaction, user: discord.User):
         await interaction.followup.send("Botは現在オフラインです。`/login` コマンドで再起動してください。")
         return
 
-    if user.id not in registered_users:
+    user_data = get_user(user.id)
+    if user_data is None:
         await interaction.followup.send("まだ登録されていません。 `/register` コマンドで登録してください。")
+        return
+
+    last_play_str, notified = user_data
+    if not last_play_str:
+        await interaction.followup.send(f"{user.mention} はまだLoLをプレイしていません。")
         return
 
     # ユーザーの現在のアクティビティを取得
@@ -191,12 +215,7 @@ async def check_command(interaction: discord.Interaction, user: discord.User):
             await interaction.followup.send("現在プレイ中です。")
             return
 
-    last_play = registered_users[user.id].get('last_play')
-    if not last_play:
-        await interaction.followup.send(f"{user.mention} はまだLoLをプレイしていません。")
-        return
-
-    last_play_dt = datetime.fromisoformat(last_play)
+    last_play_dt = datetime.fromisoformat(last_play_str)
     now_dt = datetime.now(timezone.utc)
     diff = now_dt - last_play_dt
     total_minutes = int(diff.total_seconds() // 60)
@@ -210,9 +229,6 @@ async def check_command(interaction: discord.Interaction, user: discord.User):
         hours = total_minutes // 60
         minutes = total_minutes % 60
         await interaction.followup.send(f"{user.mention} が最後にLoLをプレイしてから **{hours}時間 {minutes}分** 経過しました。")
-
-    # メッセージを公開
-    await interaction.followup.send("プレイ時間のチェックが完了しました。", ephemeral=False)
 
 # /login コマンドの実装
 @bot.tree.command(name="login", description="Botを起動し、挨拶メッセージを送信します。")
@@ -309,6 +325,7 @@ async def run_bot_and_server():
 
 # ボットとサーバーを起動
 def main():
+    init_db()
     try:
         asyncio.run(run_bot_and_server())
     except KeyboardInterrupt:
