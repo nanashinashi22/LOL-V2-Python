@@ -7,6 +7,9 @@ from datetime import datetime, timezone, timedelta
 import asyncio
 from aiohttp import web
 
+# グローバル変数でボットの状態を管理
+is_bot_active = True
+
 # 環境変数からボットのトークンと出力チャンネルIDを取得
 DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
 OUTPUT_CHANNEL_ID = os.environ.get("OUTPUT_CHANNEL_ID")  # メッセージ送信先のチャンネルID
@@ -128,7 +131,10 @@ async def check_last_play():
 @bot.event
 async def on_command_error(interaction: discord.Interaction, error):
     print(f"Error: {error}")
-    await interaction.response.send_message("エラーが発生しました。管理者に報告してください。", ephemeral=True)
+    try:
+        await interaction.response.send_message("エラーが発生しました。管理者に報告してください。", ephemeral=False)
+    except:
+        pass  # 既に応答が送信されている場合
 
 # /register コマンドの実装
 @bot.tree.command(name="register", description="Discordユーザーを監視対象に登録します。")
@@ -136,49 +142,121 @@ async def on_command_error(interaction: discord.Interaction, error):
     user="登録したいユーザーを選択してください"
 )
 async def register_command(interaction: discord.Interaction, user: discord.User):
-    if user.id in registered_users:
-        await interaction.response.send_message(f"{user.mention} は既に登録されています。", ephemeral=True)
+    # インタラクションへの迅速な応答
+    await interaction.response.defer(ephemeral=False)
+
+    if not is_bot_active:
+        await interaction.followup.send("Botは現在オフラインです。`/login` コマンドで再起動してください。")
         return
+
+    if user.id in registered_users:
+        await interaction.followup.send(f"{user.mention} は既に登録されています。")
+        return
+
     registered_users[user.id] = {
         "last_play": None,  # 初期値はNone
         "notified": False
     }
     save_user_data(registered_users)
-    # コマンド実行者に公開メッセージを送信
-    await interaction.response.send_message(f"{user.mention} を監視対象に登録しました！", ephemeral=False)
+    # 指定されたチャンネルにメッセージを送信
+    output_channel = bot.get_channel(int(OUTPUT_CHANNEL_ID))
+    if output_channel:
+        await output_channel.send(f"{user.mention} を監視対象に登録しました！")
+    else:
+        await interaction.followup.send("指定されたチャンネルが見つかりません。")
+    
+    # メッセージを公開
+    await interaction.followup.send("ユーザーの登録が完了しました。", ephemeral=False)
 
 # /check コマンドの実装
 @bot.tree.command(name="check", description="ユーザーが最後にLoLをプレイしてからの経過時間を表示します。")
 @app_commands.describe(user="対象のユーザーを選択してください")
 async def check_command(interaction: discord.Interaction, user: discord.User):
-    if user.id not in registered_users:
-        await interaction.response.send_message("まだ登録されていません。 `/register` コマンドで登録してください。", ephemeral=True)
+    # インタラクションへの迅速な応答
+    await interaction.response.defer(ephemeral=False)
+
+    if not is_bot_active:
+        await interaction.followup.send("Botは現在オフラインです。`/login` コマンドで再起動してください。")
         return
+
+    if user.id not in registered_users:
+        await interaction.followup.send("まだ登録されていません。 `/register` コマンドで登録してください。")
+        return
+
+    # ユーザーの現在のアクティビティを取得
+    member = interaction.guild.get_member(user.id)
+    if member:
+        current_activity = member.activity
+        if is_playing_lol(current_activity):
+            await interaction.followup.send("現在プレイ中です。")
+            return
+
     last_play = registered_users[user.id].get('last_play')
     if not last_play:
-        await interaction.response.send_message(f"{user.mention} はまだLoLをプレイしていません。", ephemeral=True)
+        await interaction.followup.send(f"{user.mention} はまだLoLをプレイしていません。")
         return
+
     last_play_dt = datetime.fromisoformat(last_play)
     now_dt = datetime.now(timezone.utc)
     diff = now_dt - last_play_dt
-    hours = diff.total_seconds() / 3600.0
-    # コマンド実行者に公開メッセージを送信
-    await interaction.response.send_message(
-        f"{user.mention} が最後にLoLをプレイしてから **{hours:.1f}時間** 経過しました。",
-        ephemeral=False
-    )
+    total_minutes = int(diff.total_seconds() // 60)
+
+    if total_minutes < 60:
+        minutes = (total_minutes // 10) * 10
+        if minutes == 0:
+            minutes = 10
+        await interaction.followup.send(f"{user.mention} が最後にLoLをプレイしてから **{minutes}分** 経過しました。")
+    else:
+        hours = total_minutes // 60
+        minutes = total_minutes % 60
+        await interaction.followup.send(f"{user.mention} が最後にLoLをプレイしてから **{hours}時間 {minutes}分** 経過しました。")
+
+    # メッセージを公開
+    await interaction.followup.send("プレイ時間のチェックが完了しました。", ephemeral=False)
 
 # /login コマンドの実装
 @bot.tree.command(name="login", description="Botを起動し、挨拶メッセージを送信します。")
 async def login_command(interaction: discord.Interaction):
-    # コマンド実行者に公開メッセージを送信
-    await interaction.response.send_message("ピピーッ❗️🔔⚡️LOL脱走兵監視botです❗️👊👮❗️", ephemeral=False)
+    global is_bot_active
+
+    # インタラクションへの迅速な応答
+    await interaction.response.defer(ephemeral=False)
+
+    if is_bot_active:
+        await interaction.followup.send("すでに起動しています。")
+        return
+
+    is_bot_active = True
+    # 指定されたチャンネルにメッセージを送信
+    output_channel = bot.get_channel(int(OUTPUT_CHANNEL_ID))
+    if output_channel:
+        await output_channel.send("Botを再起動しました。挨拶メッセージを送信します。")
+    else:
+        await interaction.followup.send("指定されたチャンネルが見つかりません。")
+
+    await interaction.followup.send("Botが起動しました。", ephemeral=False)
 
 # /logout コマンドの実装
 @bot.tree.command(name="logout", description="Botをオフラインにします。")
 async def logout_command(interaction: discord.Interaction):
-    # コマンド実行者に公開メッセージを送信
-    await interaction.response.send_message("Botをオフラインにします。", ephemeral=False)
+    global is_bot_active
+
+    # インタラクションへの迅速な応答
+    await interaction.response.defer(ephemeral=False)
+
+    if not is_bot_active:
+        await interaction.followup.send("すでにオフです。")
+        return
+
+    is_bot_active = False
+    # 指定されたチャンネルにメッセージを送信
+    output_channel = bot.get_channel(int(OUTPUT_CHANNEL_ID))
+    if output_channel:
+        await output_channel.send("Botをオフラインにします。")
+    else:
+        await interaction.followup.send("指定されたチャンネルが見つかりません。")
+
+    await interaction.followup.send("Botをオフラインにしました。", ephemeral=False)
     await bot.close()
 
 # /rules コマンドの実装
@@ -190,12 +268,12 @@ async def rules_command(interaction: discord.Interaction):
         "主なコマンド:\n"
         "/register @ユーザー: Discordユーザーを監視対象に登録\n"
         "/check @ユーザー: 最後にLoLをプレイしてから何時間経過しているかチェック\n"
-        "/login: Botの挨拶メッセージ送信 & ログイン\n"
+        "/login: Botの挨拶メッセージ送信 & 起動\n"
         "/logout: Botをオフラインにする\n"
         "/rules: LOL脱走兵を監視します。\n"
         "```"
     )
-    # コマンド実行者に公開メッセージを送信
+    # インタラクションへの迅速な応答
     await interaction.response.send_message(text, ephemeral=False)
 
 # 簡単なHTTPサーバーの実装（Koyebのヘルスチェック用）
