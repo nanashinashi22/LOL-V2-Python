@@ -1,11 +1,13 @@
 import os
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+import asyncio
+from aiohttp import web
 
-# 環境変数からボットのトークンと通知チャンネルIDを取得
+# 環境変数からボットのトークンと出力チャンネルIDを取得
 DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
 OUTPUT_CHANNEL_ID = os.environ.get("OUTPUT_CHANNEL_ID")  # メッセージ送信先のチャンネルID
 
@@ -62,8 +64,9 @@ async def on_presence_update(before, after):
     is_playing = is_playing_lol(after.activity)
 
     if not was_playing and is_playing:
-        # プレイを開始した場合、タイムスタンプを記録
+        # プレイを開始した場合、タイムスタンプを記録し、通知フラグをリセット
         registered_users[user_id]['last_play'] = datetime.now(timezone.utc).isoformat()
+        registered_users[user_id]['notified'] = False
         save_user_data(registered_users)
 
     elif was_playing and not is_playing:
@@ -79,6 +82,48 @@ async def on_ready():
         print(f"Synced {len(synced)} command(s)")
     except Exception as e:
         print(e)
+    check_last_play.start()  # バックグラウンドタスクの開始
+
+# バックグラウンドタスク: 1時間ごとにチェック
+@tasks.loop(hours=1)
+async def check_last_play():
+    now = datetime.now(timezone.utc)
+    threshold = timedelta(hours=24)
+    output_channel = bot.get_channel(int(OUTPUT_CHANNEL_ID))
+
+    if not output_channel:
+        print("指定されたチャンネルが見つかりません。")
+        return
+
+    for user_id, data in registered_users.items():
+        last_play_str = data.get('last_play')
+        notified = data.get('notified', False)
+
+        if not last_play_str:
+            continue  # プレイ履歴がない場合はスキップ
+
+        last_play = datetime.fromisoformat(last_play_str)
+        time_diff = now - last_play
+
+        if time_diff >= threshold and not notified:
+            user = bot.get_user(int(user_id))
+            if user:
+                try:
+                    await output_channel.send(f"{user.mention} LOLから逃げるな。お前を見ている")
+                    # 通知フラグを更新
+                    registered_users[user_id]['notified'] = True
+                except Exception as e:
+                    print(f"ユーザー {user_id} にメッセージを送信できませんでした: {e}")
+            else:
+                print(f"ユーザー {user_id} が見つかりません。")
+    
+    save_user_data(registered_users)
+
+# エラーハンドリング
+@bot.event
+async def on_command_error(interaction: discord.Interaction, error):
+    print(f"Error: {error}")
+    await interaction.response.send_message("エラーが発生しました。管理者に報告してください。", ephemeral=True)
 
 # /register コマンドの実装
 @bot.tree.command(name="register", description="Discordユーザーを監視対象に登録します。")
@@ -90,7 +135,8 @@ async def register_command(interaction: discord.Interaction, user: discord.User)
         await interaction.response.send_message(f"{user.mention} は既に登録されています。", ephemeral=True)
         return
     registered_users[user.id] = {
-        "last_play": None  # 初期値はNone
+        "last_play": None,  # 初期値はNone
+        "notified": False
     }
     save_user_data(registered_users)
     # 指定されたチャンネルにメッセージを送信
@@ -165,13 +211,39 @@ async def rules_command(interaction: discord.Interaction):
     else:
         await interaction.response.send_message("指定されたチャンネルが見つかりません。", ephemeral=True)
 
-# ボットの起動
+# 簡単なHTTPサーバーの実装（Koyebのヘルスチェック用）
+async def handle(request):
+    return web.Response(text="OK")
+
+async def init_app():
+    app = web.Application()
+    app.router.add_get('/', handle)
+    return app
+
+# ボットとHTTPサーバーを同時に実行する関数
+async def run_bot_and_server():
+    # ボットのタスク
+    bot_task = asyncio.create_task(bot.start(DISCORD_BOT_TOKEN))
+    
+    # HTTPサーバーのタスク
+    app = await init_app()
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', int(os.environ.get("PORT", 8000)))
+    await site.start()
+    print("HTTP server started for health checks.")
+    
+    # 両方のタスクを並行して実行
+    await asyncio.gather(bot_task)
+
+# ボットとサーバーを起動
 def main():
     try:
-        bot.run(DISCORD_BOT_TOKEN)
+        asyncio.run(run_bot_and_server())
+    except KeyboardInterrupt:
+        print("Bot stopped manually.")
     except Exception as e:
         print(f"Botの起動中にエラーが発生しました: {e}")
-        exit(1)
 
 if __name__ == "__main__":
     main()
